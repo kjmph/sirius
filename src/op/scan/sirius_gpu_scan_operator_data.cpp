@@ -21,6 +21,7 @@
 
 #include <compression/decompression_pushdown_policy.hpp>
 #include <cucascade/cudf/gpu_data_representation.hpp>
+#include <data/data_batch_utils.hpp>
 #include <data/sirius_converter_registry.hpp>
 #include <log/logging.hpp>
 #include <op/dynamic_filter/sirius_dynamic_filter.hpp>
@@ -225,6 +226,17 @@ void scan_operator_input::prepare_for_processing(
         dynamic_cast<const ::cucascade::gpu_table_representation*>(data) != nullptr;
       needs_upload = data != nullptr &&
                      (ro.get_current_tier() != ::cucascade::memory::Tier::GPU || !is_gpu_table);
+      if (is_gpu_table && ro.get_memory_space()->get_id() != requested_memory_space->get_id()) {
+        // Admission can exclude the pin's home GPU. Clone under the shared lock so
+        // this split runs on the requested GPU without moving the shared pin.
+        auto clone =
+          ro.clone_to<::cucascade::gpu_table_representation>(::sirius::converter_registry::get(),
+                                                             ::sirius::get_next_batch_id(),
+                                                             requested_memory_space,
+                                                             stream);
+        materialization_info = clone;
+        batch                = std::move(clone);
+      }
     }
     if (needs_upload) {
       auto& registry = ::sirius::converter_registry::get();

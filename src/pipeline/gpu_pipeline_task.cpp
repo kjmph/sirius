@@ -332,14 +332,17 @@ std::size_t gpu_pipeline_task_local_state::get_estimated_bytes_to_materialize_in
 
   if (auto* scan_input = dynamic_cast<const op::scan::scan_operator_input*>(_input_data.get());
       scan_input && scan_input->is_resident()) {
-    // Cached scan inputs can still reside in HOST and require an upload before execution.
+    // Cached scans need an upload or a clone when their input is not on the target GPU.
     auto batch = scan_input->get_cached_batch();
     if (!batch) { return 0; }
 
     auto ro          = batch->to_read_only();
     auto const* data = ro.get_data();
-    if (!data || ro.get_current_tier() == cucascade::memory::Tier::GPU) { return 0; }
-    return peak_materialization_bytes(data);
+    if (!data) { return 0; }
+    const bool non_gpu     = ro.get_current_tier() != cucascade::memory::Tier::GPU;
+    const bool cross_space = target_space != nullptr && ro.get_memory_space() != nullptr &&
+                             ro.get_memory_space()->get_id() != target_space->get_id();
+    return non_gpu || cross_space ? peak_materialization_bytes(data) : 0;
   }
 
   std::size_t input_size   = 0;
